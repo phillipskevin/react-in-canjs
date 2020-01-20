@@ -1,16 +1,35 @@
-var reactComponentSymbol = Symbol.for("r2wc.reactComponent");
-var renderSymbol = Symbol.for("r2wc.reactRender");
-var shouldRenderSymbol = Symbol.for("r2wc.shouldRender");
+import { Reflect as canReflect, Observation, queues } from "can";
+var reactComponentSymbol = Symbol.for("r2owc.reactComponent");
+var renderSymbol = Symbol.for("r2owc.reactRender");
+var shouldRenderSymbol = Symbol.for("r2owc.shouldRender");
 
 var define = {
 	// Creates a getter/setter that re-renders everytime a property is set.
 	expando: function(receiver, key, value) {
+		// If `value` is an observable map or list,
+		// serialize value and call render if serialized value changes
+		var valueIsSerializable = canReflect.isObservableLike(value) &&
+			(canReflect.isMapLike(value) || canReflect.isListLike(value));
+		var rerenderIfObservableChanges = (value) => {
+			if (valueIsSerializable) {
+				var serializedValue = new Observation(() => canReflect.serialize(value));
+				canReflect.onValue(serializedValue, receiver[renderSymbol].bind(receiver));
+				return () => canReflect.offValue(serializedValue);
+			}
+		};
+
+		var teardownListener = rerenderIfObservableChanges(value);
+
 		Object.defineProperty(receiver, key, {
 			enumerable: true,
 			get: function() {
 				return value;
 			},
 			set: function(newValue) {
+				// unbind old serialized value and bind on new serialized value
+				if (teardownListener) { teardownListener(); }
+				teardownListener = rerenderIfObservableChanges(newValue);
+
 				value = newValue;
 				this[renderSymbol]();
 				return true;
